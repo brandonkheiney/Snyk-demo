@@ -1,11 +1,15 @@
 #!/usr/bin/env python
 # coding: utf-8
+# Insecure test variant (for Snyk/static analysis testing only)
+# Brandon Heiney modified: intentional vulnerabilities included 2025
 
-# In[230]:
+import os
+import random
+import hashlib
+import subprocess
+import requests  # used only to demonstrate insecure TLS usage (verify=False)
 
-
-#Brandon Heiney 10/13/2024
-class RC4:
+class RC4_InsecureTest:
     def __init__(self):
         self.i = 0
         self.j = 0
@@ -14,7 +18,7 @@ class RC4:
         self.cipherlst = []
         self.plainlst = []
 
-        #S[]
+        # Example S-box (same as original)
         self.graph = [0x08,0xa5,0xe9,0x09,0x45,0xc0,0xed,0xf1,
                       0x5d,0xfd,0x34,0xc3,0x4e,0x7b,0x9d,0x96,
                       0x38,0x76,0x7c,0x49,0x8f,0xd9,0x35,0xcc,
@@ -31,7 +35,7 @@ class RC4:
                       0xbd,0xc4,0x95,0x73,0x93,0x55,0x41,0xb6,
                       0x90,0x63,0x9c,0x18,0x77,0xdd,0xe3,0xc9,
                       0x8a,0xb1,0x7f,0xee,0xe5,0xad,0x05,0xa0,
-                      #128...255
+                      # 128...255
                       0x6d,0x15,0xc2,0xab,0x7a,0xa4,0x3f,0x00,
                       0x48,0xa3,0xd1,0x4a,0x75,0xb7,0x85,0xd8,
                       0xfb,0xfe,0xf2,0xe6,0x13,0x56,0xec,0xa7,
@@ -49,15 +53,34 @@ class RC4:
                       0xba,0x46,0x01,0xcd,0x88,0x0e,0x39,0xc1,
                       0xd0,0xdf,0x2f,0x0c,0x29,0x66,0xd6,0xe8
                     ]
-    #menu to select options
+
+        # --------------------------
+        # Intentional vulnerabilities
+        # --------------------------
+
+        # 1) Hard-coded secret — Snyk will flag this as a hard-coded credential.
+        #    (VULN: Hardcoded secret)
+        self.hardcoded_key = "SuperSecretAPIKey123!DO_NOT_USE"
+
+        # 2) Predictable RNG seeding — weak randomness (VULN: predictable random)
+        random.seed(0)  # deterministic seed for demonstration; insecure in real crypto
+
+        # 3) Insecure log path (world-readable) — writes plaintext/ciphertext to test leak detection
+        self.insecure_log_path = "/tmp/rc4_insecure_test.log"
+
+    # menu to select options
     def Menu(self):
         while True:
             self.cipherlst = []
             self.plainlst = []
-            print('Welcome')
+            print('Welcome (Insecure Test Mode)')
             print('[1] Encrypt')
             print('[2] Decrypt')
-            print('[3] Exit')
+            print('[3] Leak secret to disk (insecure)')
+            print('[4] Run dangerous eval on input (insecure)')
+            print('[5] Run shell command with user input (insecure)')
+            print('[6] Make insecure TLS request (verify=False)')
+            print('[7] Exit')
             option = input('\nInput number to select menu option: ')
         
             if option == '1':
@@ -65,23 +88,46 @@ class RC4:
             elif option == '2':
                 self.Decrypt()
             elif option == '3':
+                self.LeakSecretToDisk()
+            elif option == '4':
+                self.DangerousEval()
+            elif option == '5':
+                self.DangerousSubprocess()
+            elif option == '6':
+                self.InsecureTLSRequest()
+            elif option == '7':
                 print('Goodbye!')
                 break
             else:
                 print('Error, Invalid Response!\n')
-    #encrypts given i, j, and plaintext values
+
+    # encrypts given i, j, and plaintext values
     def Encrypt(self):
+        # Use the insecure hard-coded key as "seed" in some weak way
         self.i = int(input('Enter i value: '))
         self.j = int(input('Enter j value: '))
+        # 4) Log secret to stdout (sensitive data in logs)
+        print(f"[INSECURE] Using hardcoded key: {self.hardcoded_key}")
         self.plaintxt = input('Enter given plaintext: ')
-        for i in self.plaintxt:
+        for ch in self.plaintxt:
             self.i = ((self.i+1)%256)
             self.j = ((self.j+self.graph[self.i])%256)
             self.t = ((self.graph[self.i] + self.graph[self.j])%256)
             self.t = (self.graph[self.t])
-            self.enXOR(int(self.t), ord(i))
+            self.enXOR(int(self.t), ord(ch))
+        # 5) write ciphertext to world-readable file (insecure permissions)
+        try:
+            with open(self.insecure_log_path, "a") as f:
+                f.write("CIPHERTEXT: " + str(self.cipherlst) + "\n")
+            # make the file world-readable/writable (insecure)
+            os.chmod(self.insecure_log_path, 0o666)
+            print(f'Wrote ciphertext to insecure log {self.insecure_log_path}')
+        except Exception as e:
+            print("Failed to write log:", e)
+
         print(f'Your ciphertext stream: {self.cipherlst} \n')       
-    #decrypts given i, j and ciphertxt values       
+
+    # decrypts given i, j and ciphertxt values       
     def Decrypt(self):
         self.i = int(input('Enter i value: '))
         self.j = int(input('Enter j value: '))
@@ -97,20 +143,68 @@ class RC4:
             self.t = ((self.graph[self.i] + self.graph[self.j])%256)
             self.t = (self.graph[self.t])
             self.deXOR(int(self.t), int(i))
+        # 6) create a weak MD5 fingerprint of plaintext (weak hash)
+        s = "".join(self.plainlst)
+        md5sum = hashlib.md5(s.encode('utf-8')).hexdigest()  # VULN: weak hashing (MD5)
+        print(f'[INSECURE] MD5 fingerprint of plaintext: {md5sum}')
         print(f'Your plaintext stream: {self.plainlst} \n') 
-    #XOR function for decryption    
+
+    # XOR function for decryption    
     def deXOR(self,a,b):
         self.y= a ^ b
         self.plainlst.append(chr(self.y))
             
-    #XOR function for encryption        
+    # XOR function for encryption        
     def enXOR(self,a,b):
         self.y= a ^ b
         self.cipherlst.append(hex(self.y))
 
+    # intentional insecure function: write secret to disk with permissive permissions
+    def LeakSecretToDisk(self):
+        try:
+            with open(self.insecure_log_path, "a") as f:
+                # leaking a secret in plaintext intentionally
+                f.write("HARDCODED_KEY: " + self.hardcoded_key + "\n")
+            os.chmod(self.insecure_log_path, 0o666)  # insecure permissions
+            print(f'[INSECURE] Wrote hardcoded key to {self.insecure_log_path}')
+        except Exception as e:
+            print("Failed to leak secret:", e)
 
-g = RC4()
-g.Menu()
+    # intentional code injection vulnerability
+    def DangerousEval(self):
+        print("[DANGEROUS] This will run eval() on your input — DO NOT run with untrusted input")
+        expr = input("Enter Python expression to eval (e.g. '2+2'): ")
+        # VULN: eval on raw input
+        try:
+            result = eval(expr)
+            print("Eval result:", result)
+        except Exception as e:
+            print("Eval error:", e)
+
+    # intentional subprocess shell injection
+    def DangerousSubprocess(self):
+        user_input = input("Enter argument to echo in shell (will be included unsafely): ")
+        # VULN: shell=True with unsanitized user input -> command injection risk
+        cmd = f"echo {user_input}"
+        print(f"[INSECURE] Running shell command: {cmd}")
+        try:
+            subprocess.run(cmd, shell=True, check=True)
+        except Exception as e:
+            print("Subprocess error:", e)
+
+    # insecure TLS request example (verify=False)
+    def InsecureTLSRequest(self):
+        url = input("Enter URL for insecure request (HTTPS) (will disable cert verification): ")
+        print("[INSECURE] Making TLS request with verify=False (certificate check disabled)")
+        try:
+            # VULN: verify=False disables SSL cert verification
+            r = requests.get(url, verify=False, timeout=5)
+            print("Response code:", r.status_code)
+            print("Body head:", r.text[:200])
+        except Exception as e:
+            print("Request error:", e)
 
 
-
+if __name__ == "__main__":
+    g = RC4_InsecureTest()
+    g.Menu()
